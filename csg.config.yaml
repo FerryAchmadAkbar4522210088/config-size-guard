@@ -160,7 +160,7 @@ max_key_growth_ratio: 2.0
 # ── Fallback Thresholds (Data Integrity Guard) ─────────────────────────────
 # Mengamankan pipeline dari log leak atau file terkorupsi (garbage dump).
 fallback_entropy: 5.8
-fallback_string_length: 400
+
 
 # ── Static Floor Thresholds (Size) ─────────────────────────────────────────
 static_floor:
@@ -173,7 +173,6 @@ growth_fail_pct:   50      # +50% dari baseline → FAIL
 growth_warn_bytes: 102400  # +100 KB → WARN
 growth_fail_bytes: 512000  # +500 KB → FAIL
 
-# ── Absolute Analyzer (Layer 2 peer + Layer 3 corpus) ──────────────────────
+# ── Absolute Analyzer (Layer 2 peer) ───────────────────────────────────────
 absolute_min_peer_count: 4    # Min file sama-ekstensi dalam satu scan untuk peer IQR
 absolute_peer_min_bytes: 1024 # Abaikan outlier peer jika file terlalu kecil
-corpus_min_samples: 20       # Min sampel corpus sebelum corpus outlier aktif

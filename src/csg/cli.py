@@ -21,12 +21,10 @@ from csg.repo_stats import RepoStatsManager
 from csg.models import FileResult, CheckResult
 from csg.analyzer.growth import analyze_growth
 from csg.analyzer.structural import analyze_structural
-from csg.analyzer.strings import analyze_strings, extract_longest_token
-from csg.analyzer.entropy import analyze_entropy
+from csg.analyzer.entropy import analyze_entropy, extract_longest_token
 from csg.analyzer.keycount import analyze_keycount
 from csg.analyzer.absolute import build_peer_stats, analyze_absolute
 from csg.analyzer.consistency import analyze_consistency
-from csg.corpus import CorpusStats
 
 # --- DEV AUDIT LOGGER (SRE drift false-negative tuning) ---
 _DRIFT_PATH_MARKERS = (
@@ -44,7 +42,7 @@ def write_dev_audit_log(filepath, final_score, checks, output_file="csg_dev_audi
 
     if is_drift_specimen and final_score == 0:
         entropy_val = next((c.value for c in checks if c.check == "entropy_anomaly"), "N/A")
-        length_val = next((c.value for c in checks if c.check == "string_growth_spike"), "N/A")
+
         
         log_entry = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -52,7 +50,6 @@ def write_dev_audit_log(filepath, final_score, checks, output_file="csg_dev_audi
             "vulnerability_type": "CONFIG_DRIFT_FALSE_NEGATIVE",
             "analysis": {
                 "entropy_detected": entropy_val,
-                "longest_string_detected": length_val,
                 "reason_for_bypass": "Threshold YAML terlalu tinggi atau eksploitasi blind spot matematis."
             },
             "status": "🚨 BLIND SPOT DETECTED - NEEDS PATCHING!"
@@ -125,9 +122,7 @@ def cmd_check(args):
 
     # Layer 2: statistik peer (lintas file dalam scan ini)
     peer_stats = build_peer_stats(collected_files)
-    # Layer 3: corpus historis dari file PASS scan sebelumnya
-    corpus_stats = CorpusStats()
-    passed_files: list[Path] = []
+
 
     results = []
 
@@ -179,11 +174,10 @@ def cmd_check(args):
                 content       = ""
                 longest_token = ""
 
-            file_result.checks.extend(analyze_strings(filepath, cfg, base_entry) or [])
             file_result.checks.extend(analyze_entropy(longest_token, cfg, base_entry, filepath.suffix) or [])
             file_result.checks.extend(analyze_keycount(filepath, base_entry, cfg) or [])
             file_result.checks.extend(
-                analyze_absolute(filepath, peer_stats, corpus_stats, cfg) or []
+                analyze_absolute(filepath, peer_stats, cfg) or []
             )
 
             # ── Consistency Analyzer (Layer 4 — intrinsik, zero-day) ──────
@@ -202,15 +196,7 @@ def cmd_check(args):
         evaluate_risk(file_result)
         write_dev_audit_log(filepath, file_result.total_score, file_result.checks)
 
-        if file_result.verdict == "PASS":
-            passed_files.append(filepath)
-
         results.append(file_result)
-
-    corpus_updated = corpus_stats.update_from_scan(passed_files)
-    corpus_stats.save()
-    if args.format == "text" and corpus_updated:
-        print(f"[*] Corpus diperbarui: +{corpus_updated} sampel bersih")
 
     # Hitung total waktu pemindaian
     execution_time = time.time() - start_time

@@ -29,7 +29,6 @@ class RepoStatsManager:
         if not files: return
 
         entropies = sorted([info.get("base_entropy", 0.0) for info in files.values() if info.get("base_entropy", 0.0) > 0.0])
-        strings = sorted([info.get("base_longest_string", 0) for info in files.values() if info.get("base_longest_string", 0) > 0])
 
         # PENYIMPANAN JUMLAH POPULASI (Untuk Minimum Sample Guard)
         stats = {"sample_size": len(files)}
@@ -46,11 +45,6 @@ class RepoStatsManager:
         stats["entropy_median"] = ent_stats["median"]
         stats["entropy_iqr"] = ent_stats["iqr"]
         stats["entropy_q3"] = ent_stats["q3"]
-
-        str_stats = get_iqr_stats(strings)
-        stats["strings_median"] = str_stats["median"]
-        stats["strings_iqr"] = str_stats["iqr"]
-        stats["strings_q3"] = str_stats["q3"]
 
         self._data = stats
         with open(self.path, "w", encoding="utf-8") as f:

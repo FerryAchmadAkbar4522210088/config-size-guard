@@ -9,7 +9,6 @@ Inspired by real-world incidents (like the CrowdStrike Channel File 291 BSOD, Cl
 * **Multi-Layer Analysis**:
   * **Layer 1 (Delta Growth)**: Compares current file size and key counts against your Git baseline (`HEAD~1`) to catch sudden spikes or drops.
   * **Layer 2 (Internal Consistency & Structure)**: Analyzes JSON/YAML/TOML structures for metadata-count mismatches (e.g. `total_rules: 150` but the array only has 72 items), hidden hard-limit breaches, and structural key inflation.
-  * **Layer 3 (Historical Corpus)**: Learns from your healthy configuration history using statistical IQR (Interquartile Range) to catch files that are abnormally large compared to peers of the same extension.
 * **Format Agnostic but Smart**: Scans any text configuration (YAML, JSON, TOML, HCL, XML, etc.). For parseable formats like JSON/YAML, it performs deep structural consistency checks.
 * **SIEM Ready**: Outputs results in standard formats or NDJSON for seamless integration with Splunk, Elasticsearch, or Logstash.
 * **CI/CD Native**: Extremely lightweight and designed to fail your pipeline safely before disaster strikes.

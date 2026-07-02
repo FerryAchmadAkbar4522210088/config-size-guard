@@ -19,7 +19,6 @@ class JsonReporter:
                 "iqr": 0,
                 "keycount": 0,
                 "entropy": 0,
-                "string_size": 0,
                 "consistency": 0,
                 "cross_repo": 0
             }
@@ -35,7 +34,7 @@ class JsonReporter:
                     weight = 6
                 
                 # Pemetaan ID ke modul Analyzer (Diperluas agar tidak luput)
-                if any(k in c_name for k in ["corpus", "cross"]):
+                if any(k in c_name for k in ["cross"]):
                     breakdown["cross_repo"] += weight
                 elif any(k in c_name for k in ["consist", "format", "parse", "mismatch", "limit", "flags", "error"]):
                     breakdown["consistency"] += weight
@@ -43,8 +42,6 @@ class JsonReporter:
                     breakdown["entropy"] += weight
                 elif any(k in c_name for k in ["key", "array", "root", "field"]):
                     breakdown["keycount"] += weight
-                elif any(k in c_name for k in ["string", "token", "length"]):
-                    breakdown["string_size"] += weight
                 elif any(k in c_name for k in ["iqr", "absolute", "peer", "stat", "floor"]):
                     breakdown["iqr"] += weight
                 else:

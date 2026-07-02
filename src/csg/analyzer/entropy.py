@@ -2,7 +2,14 @@
 analyzer/entropy.py — IQR-Based Entropy Profiler with Configurable Safety Net
 """
 import math
+import re
 from ..models import CheckResult
+
+_TOKEN_SPLIT = re.compile(r'[\s\'"{}\\[\\],:;|<>\\(\\)!]+')
+
+def extract_longest_token(content: str) -> str:
+    tokens = _TOKEN_SPLIT.split(content)
+    return max(tokens, key=len, default="")
 
 MIN_TOKEN_LENGTH_FOR_ENTROPY = 32  # string < 32 char diabaikan dari entropy check
 

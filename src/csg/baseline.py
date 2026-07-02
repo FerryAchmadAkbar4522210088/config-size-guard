@@ -49,7 +49,6 @@ def update_baseline(filepaths: list[Path], baseline_path: str) -> None:
                 continue
 
             longest_token       = _extract_longest_token(content)
-            base_longest_string = len(longest_token)
             base_entropy        = _shannon_entropy(longest_token)
             base_keycount       = len(_KEY_PATTERN.findall(content))
 
@@ -68,7 +67,6 @@ def update_baseline(filepaths: list[Path], baseline_path: str) -> None:
             history.append(size_bytes)
             entry["size_history"] = history[-5:]
 
-            entry["base_longest_string"] = base_longest_string
             entry["base_entropy"]        = round(base_entropy, 2)
             entry["base_keycount"]       = base_keycount
             entry["compression_ratio"]   = round(comp_ratio, 2)

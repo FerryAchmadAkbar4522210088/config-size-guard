@@ -1,15 +1,14 @@
 """
-analyzer/absolute.py — Layer 2 (peer) & Layer 3 (corpus) absolute size guards
+analyzer/absolute.py — Layer 2 (peer) absolute size guards
 
 Melengkapi analyzer relatif (growth vs baseline/Git) dengan perbandingan
-lintas-file dalam satu scan dan terhadap corpus file PASS historis.
+lintas-file dalam satu scan.
 """
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
 from ..models import CheckResult
-from ..corpus import CorpusStats
 
 
 def _iqr_stats(values: list[int]) -> dict:
@@ -45,7 +44,6 @@ def build_peer_stats(files: list[Path]) -> dict:
 def analyze_absolute(
     filepath: Path,
     peer_stats: dict,
-    corpus_stats: CorpusStats,
     cfg: dict,
 ) -> list[CheckResult]:
     checks: list[CheckResult] = []
@@ -57,7 +55,6 @@ def analyze_absolute(
     ext = filepath.suffix.lower() or ".unknown"
     subfolder = filepath.parent.name
     min_peer = int(cfg.get("absolute_min_peer_count", 4))
-    min_corpus = int(cfg.get("corpus_min_samples", 20))
     min_bytes = int(cfg.get("absolute_peer_min_bytes", 1024))
     floor = cfg.get("static_floor") or {}
     warn_bytes = int(floor.get("size_warn_kb", 500)) * 1024
@@ -93,19 +90,6 @@ def analyze_absolute(
                 check="absolute_peer_size_outlier",
                 score=score,
                 detail=f"Size {size} B > peer P95-ish {round(threshold)} B ({ext} in {source})",
-                value=size,
-            ))
-
-    # Layer 3: outlier vs corpus PASS historis
-    corpus = corpus_stats.get_ext_stats(ext)
-    if corpus and corpus.get("sample_size", 0) >= min_corpus:
-        iqr = corpus["iqr"] or 1.0
-        threshold = corpus["q3"] + (1.5 * iqr)
-        if size > threshold and size > min_bytes:
-            checks.append(CheckResult(
-                check="absolute_corpus_size_outlier",
-                score=1,
-                detail=f"Size {size} B > corpus limit {round(threshold)} B ({ext})",
                 value=size,
             ))
 

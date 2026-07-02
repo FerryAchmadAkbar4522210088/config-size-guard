@@ -1,42 +1,75 @@
 name: DevSecOps Config Size Guard (CSG)
 
-# Pipeline ini akan berjalan otomatis setiap ada Push ke branch 'main' 
-# atau setiap ada Pull Request baru yang mengarah ke 'main'.
+# 1. TRIGGER (WEBHOOK)
+# Pipeline otomatis berjalan jika terjadi event "Push" atau "Pull Request" dari branch "Develop".
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "develop" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "develop" ]
 
 jobs:
-  security-scan:
-    name: Run CSG Anomaly Scan
+  csg-mandatory-gate:
+    name: CSG Mandatory Gate Validation
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout Repository
+      # 2. FASE PERSIAPAN (GIT CHECKOUT & STATE INJECTION)
+      - name: 📥 FASE PERSIAPAN 1 - Git Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Penting untuk mendeteksi 'git rename' di git_tracker.py
+          fetch-depth: 0 # Tarik seluruh kode terbaru untuk deteksi perubahan yang akurat
 
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # Mempercepat pipeline dengan caching
+          cache: 'pip'
 
       - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Jika Anda menggunakan pyproject.toml, aktifkan baris di bawah ini:
-          # pip install -e .
+          if [ -f config-size-guard/requirements.txt ]; then pip install -r config-size-guard/requirements.txt; fi
+          # Atau jika menggunakan direktori src sebagai package
+          # pip install -e ./config-size-guard
 
-      - name: 🛡️ Run CSG Lapis 2 (Heuristic & IQR)
-        env:
-          PYTHONPATH: src
+      - name: 💾 FASE PERSIAPAN 2 - Injeksi Konteks Historis (State Storage)
         run: |
-          echo "[*] Memulai pemindaian keamanan pada konfigurasi..."
-          # Kita scan seluruh root direktori ('.')
-          python -m csg.cli check --paths . --verbose
+          echo "[*] Menarik data CSG State Storage (Baseline)..."
+          # Simulasi penarikan baseline historis dari cache/storage eksternal (Single Source of Truth)
+          # misal: aws s3 cp s3://csg-state-storage/.csg-baseline.json ./ || true
+          echo "    Injeksi konteks historis selesai."
 
+      # 3. FASE VALIDASI (EKSEKUSI CSG - MANDATORY GATE)
+      - name: 🛡️ FASE VALIDASI 1 - Eksekusi Mesin CSG
+        env:
+          PYTHONPATH: config-size-guard/src
+        run: |
+          echo "[*] Menjalankan validasi volumetrik pada file konfigurasi..."
+          # Eksekusi CSG dan hasilkan Asynchronous JSON Log, jalankan dengan || true agar pipeline tidak terputus sebelum evaluasi
+          python -m csg.cli check --paths . --format json > csg_events.jsonl || true
+          
+      - name: 📡 FASE VALIDASI 2 - Kirim Async JSON Log ke SIEM
+        run: |
+          echo "[*] Mengirimkan log JSON asinkron ke SIEM / SecOps Dashboard..."
+          # Proses dijalankan secara paralel di background (&) agar tidak memblokir
+          # curl -X POST -H "Content-Type: application/json" -d @csg_events.jsonl https://siem.local/api/logs &
+          echo "    Pengiriman log berhasil di-trigger."
+
+      # 4. FASE KEPUTUSAN (DECISION MAKING)
+      - name: ⚖️ FASE KEPUTUSAN - Evaluasi Exit Code (MANDATORY GATE)
+        run: |
+          echo "[*] Mengevaluasi hasil pemindaian (DECISION MAKING)..."
+          
+          # Cek apakah ada verdict CRITICAL di log JSON yang dihasilkan
+          if grep -q '"severity": "CRITICAL"' csg_events.jsonl; then
+            echo "[!] KONDISI B: Ditemukan Anomali CRITICAL!"
+            echo "    Aksi: Memicu status 'Pipeline Dibatalkan' (Merge Block)."
+            echo "    Tujuan: Menolak penggabungan kode dan mengirim log remediasi kepada developer."
+            exit 1 # Agent wajib mengeluarkan Exit Code 1
+          else
+            echo "[+] KONDISI A: Status log menunjukkan PASS atau WARN (toleransi)."
+            echo "    Aksi: Melakukan 'Eksekusi Lanjutan' (Build Merge)."
+            echo "    Tujuan: Kode diizinkan masuk ke tahapan selanjutnya (Production / Main Branch)."
+            exit 0 # Agent wajib mengeluarkan Exit Code 0
+          fi
