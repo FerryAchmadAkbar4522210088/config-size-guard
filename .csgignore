@@ -3,3 +3,6 @@ vendor/**
 .venv/**
 node_modules/**
 .github/**
+
+echo "tests/evaluation_dataset/" >> config-size-guard/.csgignore
+echo "tests/growth_simulation_repo/" >> config-size-guard/.csgignore
