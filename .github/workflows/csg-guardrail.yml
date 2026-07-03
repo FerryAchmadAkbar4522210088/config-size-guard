@@ -60,7 +60,7 @@ jobs:
           PYTHONPATH: src
         run: |
           set +e
-          python -m csg.cli check --paths src scripts csg.config.yaml pyproject.toml requirements.txt --format json --strict-format > csg_events.jsonl
+          python -m csg.cli check --paths . --format json --strict-format > csg_events.jsonl
           CLI_EXIT=$?
           set -e
           echo "[*] csg.cli selesai dengan exit code $CLI_EXIT"
