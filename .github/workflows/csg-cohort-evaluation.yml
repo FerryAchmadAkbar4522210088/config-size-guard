@@ -1,0 +1,55 @@
+name: CSG Cohort Evaluation (Research Validation)
+
+# Workflow ini TIDAK memblokir merge apa pun -- bukan mandatory gate.
+# Cuma menjalankan tests/evaluate_csg.py yang sudah Anda pakai di laptop,
+# tapi di dalam GitHub Actions, supaya angka Precision/Recall/F1/FPR di
+# Bab IV terbukti reproduce di CI juga, bukan cuma di Windows/Git Bash
+# lokal Anda (Tabel 3.15).
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  evaluate:
+    name: Run evaluate_csg.py on GitHub Actions
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: 🧪 Jalankan evaluate_csg.py
+        run: python tests/evaluate_csg.py | tee evaluation_output.txt
+
+      - name: 📄 Tulis ringkasan ke Job Summary
+        if: always()
+        run: |
+          {
+            echo "## 📊 Hasil evaluate_csg.py di GitHub Actions"
+            echo '```'
+            cat evaluation_output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 📤 Upload hasil evaluasi
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: csg-evaluation-${{ github.run_id }}
+          path: |
+            evaluation_output.txt
+            tests/csg_raw_events_dump.jsonl
+          retention-days: 30

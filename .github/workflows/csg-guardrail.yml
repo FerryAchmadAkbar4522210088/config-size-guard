@@ -14,11 +14,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 2. FASE PERSIAPAN (GIT CHECKOUT & STATE INJECTION)
+      # 2. FASE PERSIAPAN 1 - GIT CHECKOUT
+      # fetch-depth: 0 WAJIB supaya HEAD~1 (commit sebelumnya) benar-benar
+      # tersedia di runner -- tanpa ini, langkah "Bangun Baseline" di bawah
+      # tidak akan menemukan riwayat apa pun.
       - name: 📥 FASE PERSIAPAN 1 - Git Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Tarik seluruh kode terbaru untuk deteksi perubahan yang akurat
+          fetch-depth: 0
 
       - name: 🐍 Set up Python 3.10
         uses: actions/setup-python@v5
@@ -29,47 +32,86 @@ jobs:
       - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f config-size-guard/requirements.txt ]; then pip install -r config-size-guard/requirements.txt; fi
-          # Atau jika menggunakan direktori src sebagai package
-          # pip install -e ./config-size-guard
+          pip install -r requirements.txt
+          pip install -e .
+          sudo apt-get update -y && sudo apt-get install -y jq
 
-      - name: 💾 FASE PERSIAPAN 2 - Injeksi Konteks Historis (State Storage)
+      # -----------------------------------------------------------------
+      # FASE PERSIAPAN 2 - BANGUN BASELINE DARI HEAD~1 (GANTI STEP LAMA)
+      #
+      # Versi sebelumnya cuma `echo` (tidak melakukan apa-apa) dan
+      # menyinggung S3, padahal desain riset Anda (Bab 3.13) baseline-nya
+      # LOKAL di git, bukan storage eksternal. Ini versi yang benar-benar
+      # membangun file `.csg-baseline.json`, memakai logika PERSIS SAMA
+      # dengan tests/evaluate_csg.py Anda (scripts/build_baseline.py),
+      # supaya hasil di GitHub Actions konsisten dengan hasil evaluasi
+      # lokal Anda.
+      # -----------------------------------------------------------------
+      - name: 💾 FASE PERSIAPAN 2 - Bangun Baseline dari HEAD~1
         run: |
-          echo "[*] Menarik data CSG State Storage (Baseline)..."
-          # Simulasi penarikan baseline historis dari cache/storage eksternal (Single Source of Truth)
-          # misal: aws s3 cp s3://csg-state-storage/.csg-baseline.json ./ || true
-          echo "    Injeksi konteks historis selesai."
+          python scripts/build_baseline.py \
+            --repo . \
+            --ref HEAD~1 \
+            --config-src csg.config.yaml
 
       # 3. FASE VALIDASI (EKSEKUSI CSG - MANDATORY GATE)
       - name: 🛡️ FASE VALIDASI 1 - Eksekusi Mesin CSG
         env:
-          PYTHONPATH: config-size-guard/src
+          PYTHONPATH: src
         run: |
-          echo "[*] Menjalankan validasi volumetrik pada file konfigurasi..."
-          # Eksekusi CSG dan hasilkan Asynchronous JSON Log, jalankan dengan || true agar pipeline tidak terputus sebelum evaluasi
-          python -m csg.cli check --paths . --format json > csg_events.jsonl || true
-          
+          set +e
+          python -m csg.cli check --paths . --format json --strict-format > csg_events.jsonl
+          CLI_EXIT=$?
+          set -e
+          echo "[*] csg.cli selesai dengan exit code $CLI_EXIT"
+
+          # Kalau file output kosong padahal proses "sukses", kemungkinan besar
+          # CLI crash sebelum sempat menulis satu baris pun -- itu beda kasus
+          # dengan "menemukan CRITICAL", dan harus dianggap gagal keras.
+          if [ ! -s csg_events.jsonl ]; then
+            echo "::error::csg_events.jsonl kosong -- kemungkinan csg.cli gagal/crash, bukan menemukan anomali."
+            exit 1
+          fi
+
+      - name: 📄 Upload Log CSG (untuk remediasi developer)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: csg-events-${{ github.run_id }}
+          path: csg_events.jsonl
+          retention-days: 14
+
       - name: 📡 FASE VALIDASI 2 - Kirim Async JSON Log ke SIEM
+        if: always()
         run: |
-          echo "[*] Mengirimkan log JSON asinkron ke SIEM / SecOps Dashboard..."
-          # Proses dijalankan secara paralel di background (&) agar tidak memblokir
-          # curl -X POST -H "Content-Type: application/json" -d @csg_events.jsonl https://siem.local/api/logs &
-          echo "    Pengiriman log berhasil di-trigger."
+          echo "[*] Mengirimkan log JSON ke SIEM / SecOps Dashboard..."
+          # Placeholder -- isi URL & secret asli sebelum diklaim "terimplementasi".
+          # curl -sf -X POST -H "Content-Type: application/json" \
+          #   -H "Authorization: Bearer ${{ secrets.SIEM_TOKEN }}" \
+          #   --data-binary @csg_events.jsonl \
+          #   https://siem.local/api/logs || echo "::warning::Pengiriman SIEM gagal, tidak memblokir pipeline."
+          echo "    [STUB] Belum ada endpoint SIEM nyata."
 
       # 4. FASE KEPUTUSAN (DECISION MAKING)
-      - name: ⚖️ FASE KEPUTUSAN - Evaluasi Exit Code (MANDATORY GATE)
+      - name: ⚖️ FASE KEPUTUSAN - Evaluasi Verdict (MANDATORY GATE)
         run: |
           echo "[*] Mengevaluasi hasil pemindaian (DECISION MAKING)..."
-          
-          # Cek apakah ada verdict CRITICAL di log JSON yang dihasilkan
-          if grep -q '"severity": "CRITICAL"' csg_events.jsonl; then
+
+          # PENTING: sama persis dengan cara tests/evaluate_csg.py membaca hasil --
+          # hanya event dengan event_type == "csg_file_scan" yang dihitung
+          # sebagai keputusan final per file (bukan sembarang baris yang
+          # kebetulan mengandung kata "severity").
+          CRITICAL_COUNT=$(jq -c 'select(.event_type=="csg_file_scan" and .severity=="CRITICAL")' csg_events.jsonl | wc -l)
+          echo "Jumlah file dengan severity CRITICAL: $CRITICAL_COUNT"
+
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "### ❌ CSG Verdict: CRITICAL ($CRITICAL_COUNT berkas)" >> "$GITHUB_STEP_SUMMARY"
+            jq -c 'select(.event_type=="csg_file_scan" and .severity=="CRITICAL") | {filepath, severity}' csg_events.jsonl >> "$GITHUB_STEP_SUMMARY"
             echo "[!] KONDISI B: Ditemukan Anomali CRITICAL!"
             echo "    Aksi: Memicu status 'Pipeline Dibatalkan' (Merge Block)."
-            echo "    Tujuan: Menolak penggabungan kode dan mengirim log remediasi kepada developer."
-            exit 1 # Agent wajib mengeluarkan Exit Code 1
+            exit 1
           else
-            echo "[+] KONDISI A: Status log menunjukkan PASS atau WARN (toleransi)."
-            echo "    Aksi: Melakukan 'Eksekusi Lanjutan' (Build Merge)."
-            echo "    Tujuan: Kode diizinkan masuk ke tahapan selanjutnya (Production / Main Branch)."
-            exit 0 # Agent wajib mengeluarkan Exit Code 0
+            echo "### ✅ CSG Verdict: PASS / WARN" >> "$GITHUB_STEP_SUMMARY"
+            echo "[+] KONDISI A: Tidak ada CRITICAL. Kode diizinkan lanjut."
+            exit 0
           fi
