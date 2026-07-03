@@ -11,4 +11,5 @@ csg-report.json
 .csg-repo-stats.json
 .csg-corpus.json
 tests/growth_simulation_repo/
+tests/csg_raw_events_dump.jsonl
 csg_dev_audit.log

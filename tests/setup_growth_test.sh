@@ -1,33 +1,15 @@
 #!/usr/bin/env bash
-# Bangun arena Git simulasi insiden dari dataset-uji/kohort-{1,2,3}.
-# Kohort-2 dan kohort-3 disimpan flat; skrip ini merutekan ke subfolder
-# S*/R* yang diharapkan evaluate_csg.py dan ground truth CSV.
+# Bangun arena Git simulasi insiden dari tests/evaluation_dataset/{1,2,3}.
+# Dijalankan dari root repo config-size-guard (folder tempat pyproject.toml berada).
 set -euo pipefail
 
 ROOT_DIR="$(pwd)"
 TARGET_DIR="tests/growth_simulation_repo"
-BENIGN_DIR="dataset-uji/kohort-1"
-DRIFT_DIR="dataset-uji/kohort-2"
-POSTMORTEM_DIR="dataset-uji/kohort-3"
+EVAL_DIR="tests/evaluation_dataset"
 
-scenario_dir_for_suffix() {
-  case "$1" in
-    s1) echo "S1_cloudflare_feature_file_doubled" ;;
-    s2) echo "S2_crowdstrike_field_count_anomaly" ;;
-    s3) echo "S3_roblox_consul_kv_bloat" ;;
-    s4) echo "S4_faa_file_truncation_anomaly" ;;
-  esac
-}
-
-postmortem_dir_for_file() {
-  case "$1" in
-    cloudflare_*) echo "R1_cloudflare" ;;
-    channel_file_*) echo "R2_crowdstrike" ;;
-    consul_registry_*) echo "R3_roblox" ;;
-    notam_database_*) echo "R4_faa" ;;
-    *) echo "" ;;
-  esac
-}
+BENIGN_DIR="$EVAL_DIR/1_benign_standard"
+DRIFT_DIR="$EVAL_DIR/2_config_drift_simulated"
+POSTMORTEM_DIR="$EVAL_DIR/3_real_postmortem_replicas"
 
 echo "[*] Membangun repositori simulasi Insiden CI/CD di $TARGET_DIR ..."
 
@@ -39,25 +21,13 @@ git init -q -b main
 git config user.name "CI-CD Bot"
 git config user.email "bot@infrastructure.local"
 
-# FASE 1 (HEAD~1): baseline stabil
+# -----------------------------------------------------------------------
+# FASE 1 (HEAD~1): Baseline stabil
+# - Salin semua file benign ke folder 1_benign_standard/
+# - Untuk setiap subfolder skenario drift (S1-S4), salin versi BERSIH:
+#   ambil file dari kohort-1/benign dengan nama yang sama (buang akhiran __sN)
+# -----------------------------------------------------------------------
 echo "[*] [HEAD~1] Menerapkan konfigurasi awal yang stabil (Baseline)..."
-
-DRIFT_PATH="$ROOT_DIR/$DRIFT_DIR"
-if [ -d "$DRIFT_PATH" ]; then
-  for f in "$DRIFT_PATH"/*; do
-    [ -f "$f" ] || continue
-    filename=$(basename "$f")
-    if [[ "$filename" =~ __s([1-4]) ]]; then
-      scenario_dir="$(scenario_dir_for_suffix "s${BASH_REMATCH[1]}")"
-      mkdir -p "$scenario_dir"
-      clean_name=$(echo "$filename" | sed -E 's/__s[1-4]//')
-      benign_file="$ROOT_DIR/$BENIGN_DIR/$clean_name"
-      if [ -f "$benign_file" ]; then
-        cp "$benign_file" "$scenario_dir/$filename"
-      fi
-    fi
-  done
-fi
 
 BENIGN_PATH="$ROOT_DIR/$BENIGN_DIR"
 if [ -d "$BENIGN_PATH" ]; then
@@ -65,34 +35,56 @@ if [ -d "$BENIGN_PATH" ]; then
   cp -r "$BENIGN_PATH"/. "1_benign_standard/"
 fi
 
+DRIFT_PATH="$ROOT_DIR/$DRIFT_DIR"
+if [ -d "$DRIFT_PATH" ]; then
+  # Iterasi setiap subfolder skenario (S1_..., S2_..., dst.)
+  for scenario_subdir in "$DRIFT_PATH"/*/; do
+    [ -d "$scenario_subdir" ] || continue
+    scenario_name=$(basename "$scenario_subdir")
+    mkdir -p "$scenario_name"
+    # Untuk setiap file drift, salin versi BERSIH (tanpa __sN) dari benign
+    for f in "$scenario_subdir"*; do
+      [ -f "$f" ] || continue
+      drift_filename=$(basename "$f")
+      # Buang akhiran __s1 / __s2 / __s3 / __s4 untuk mendapatkan nama benign
+      clean_name=$(echo "$drift_filename" | sed -E 's/__s[1-4]//')
+      benign_file="$BENIGN_PATH/$clean_name"
+      if [ -f "$benign_file" ]; then
+        cp "$benign_file" "$scenario_name/$drift_filename"
+      fi
+    done
+  done
+fi
+
 git add -A
 git commit -q -m "chore: successful deployment v1.0.0"
 
-# FASE 2 (HEAD): drift + postmortem
+# -----------------------------------------------------------------------
+# FASE 2 (HEAD): Drift + Postmortem
+# - Timpa folder skenario dengan file drift SESUNGGUHNYA
+# - Tambahkan file postmortem (tidak punya baseline — dideteksi lewat
+#   Internal Consistency, bukan Delta Growth)
+# -----------------------------------------------------------------------
 echo "[*] [HEAD] Menerapkan konfigurasi rusak (Drift) & File Baru (Zero-Day)..."
 
 if [ -d "$DRIFT_PATH" ]; then
-  for f in "$DRIFT_PATH"/*; do
-    [ -f "$f" ] || continue
-    filename=$(basename "$f")
-    if [[ "$filename" =~ __s([1-4]) ]]; then
-      scenario_dir="$(scenario_dir_for_suffix "s${BASH_REMATCH[1]}")"
-      mkdir -p "$scenario_dir"
-      cp "$f" "$scenario_dir/$filename"
-    fi
+  for scenario_subdir in "$DRIFT_PATH"/*/; do
+    [ -d "$scenario_subdir" ] || continue
+    scenario_name=$(basename "$scenario_subdir")
+    mkdir -p "$scenario_name"
+    cp -r "$scenario_subdir". "$scenario_name/"
   done
 fi
 
 POSTMORTEM_PATH="$ROOT_DIR/$POSTMORTEM_DIR"
 if [ -d "$POSTMORTEM_PATH" ]; then
   mkdir -p "3_real_postmortem_replicas"
-  for f in "$POSTMORTEM_PATH"/*; do
-    [ -f "$f" ] || continue
-    filename=$(basename "$f")
-    dest_sub="$(postmortem_dir_for_file "$filename")"
-    [ -n "$dest_sub" ] || continue
-    mkdir -p "3_real_postmortem_replicas/$dest_sub"
-    cp "$f" "3_real_postmortem_replicas/$dest_sub/$filename"
+  # Salin sub-folder R1-R4 apa adanya
+  for subdir in "$POSTMORTEM_PATH"/*/; do
+    [ -d "$subdir" ] || continue
+    subname=$(basename "$subdir")
+    mkdir -p "3_real_postmortem_replicas/$subname"
+    cp -r "$subdir". "3_real_postmortem_replicas/$subname/"
   done
 fi
 
