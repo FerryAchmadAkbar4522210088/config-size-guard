@@ -9,8 +9,11 @@ supaya CSG bisa membandingkan kondisi file sekarang vs kemarin.
 Tanpa file ini, Delta Growth Analyzer (KF01) tidak pernah aktif -- dia
 diam-diam skip semua file karena tidak tahu ukurannya kemarin.
 
-Logika sama persis dengan fungsi _build_baseline_from_git_history di
-tests/evaluate_csg.py, supaya hasil lokal dan GitHub Actions konsisten.
+PERUBAHAN: main() sekarang cek dulu apakah --config-src dan file tujuan
+(<repo>/csg.config.yaml) itu SAMA PERSIS (kasus production guardrail, yang
+men-scan repo aslinya sendiri -- bukan repo simulasi). Kalau sama, proses
+copy dilewati (tidak perlu disalin ke dirinya sendiri) alih-alih crash
+dengan shutil.SameFileError.
 
 Pemakaian:
     python scripts/build_baseline.py --repo . --ref HEAD~1
@@ -43,8 +46,8 @@ def build_baseline_files(repo: Path, ref: str) -> dict:
             ["git", "ls-tree", "-r", "--name-only", ref],
             capture_output=True,
             text=True,
-            encoding="utf-8",       # FIX: paksa UTF-8, hindari cp1252 Windows
-            errors="replace",        # FIX: karakter tak dikenal jadi "?" bukan crash
+            encoding="utf-8",
+            errors="replace",
             check=True,
             cwd=repo,
         )
@@ -63,8 +66,8 @@ def build_baseline_files(repo: Path, ref: str) -> dict:
                 ["git", "cat-file", "-s", f"{ref}:{rel_path}"],
                 capture_output=True,
                 text=True,
-                encoding="utf-8",   # FIX: sama
-                errors="replace",    # FIX: sama
+                encoding="utf-8",
+                errors="replace",
                 check=True,
                 cwd=repo,
             )
@@ -74,8 +77,8 @@ def build_baseline_files(repo: Path, ref: str) -> dict:
                 ["git", "cat-file", "blob", f"{ref}:{rel_path}"],
                 capture_output=True,
                 text=True,
-                encoding="utf-8",   # FIX: ini yang menyebabkan error merah panjang
-                errors="replace",    # FIX: tanpa ini Windows pakai cp1252 dan panik
+                encoding="utf-8",
+                errors="replace",
                 cwd=repo,
             )
             content = r_content.stdout if r_content.returncode == 0 else ""
@@ -119,9 +122,16 @@ def main():
     print(f"[+] Baseline dibangun: {len(baseline_files)} file dari '{args.ref}' -> {baseline_path}")
 
     if args.config_src:
-        src_cfg = Path(args.config_src)
-        if src_cfg.exists():
-            shutil.copy2(src_cfg, repo / "csg.config.yaml")
+        src_cfg = Path(args.config_src).resolve()
+        dst_cfg = (repo / "csg.config.yaml").resolve()
+
+        if src_cfg == dst_cfg:
+            # Kasus production guardrail: --repo adalah repo aslinya sendiri,
+            # jadi csg.config.yaml SUDAH ada di lokasi yang benar -- tidak
+            # perlu (dan tidak boleh) disalin ke dirinya sendiri.
+            print(f"    [i] csg.config.yaml sudah berada di lokasi target, tidak perlu disalin.")
+        elif src_cfg.exists():
+            shutil.copy2(src_cfg, dst_cfg)
             print(f"    csg.config.yaml disalin ke {repo}")
         else:
             print(f"    [!] --config-src '{src_cfg}' tidak ditemukan, dilewati.")
