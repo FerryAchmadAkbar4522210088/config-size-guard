@@ -1,0 +1,114 @@
+name: 'Config Size Guard (CSG)'
+description: 'DevSecOps guardrail yang mendeteksi anomali volumetrik (duplikasi, kebocoran data, config drift) pada file konfigurasi sebelum di-merge.'
+author: 'Ferry Achmad Akbar'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+# ── INPUT: yang bisa diatur pemakai lewat blok "with:" ──────────────────────
+inputs:
+  paths:
+    description: 'Folder/file yang ingin discan (pisahkan spasi kalau lebih dari satu)'
+    required: false
+    default: '.'
+  baseline-ref:
+    description: 'Commit acuan untuk menghitung pertumbuhan (default: commit sebelumnya)'
+    required: false
+    default: 'HEAD~1'
+  config-file:
+    description: 'Path csg.config.yaml kustom di repo klien (opsional). Kosongkan untuk pakai aturan default bawaan CSG.'
+    required: false
+    default: ''
+  fail-on-critical:
+    description: 'Gagalkan step ini (blokir pipeline) kalau ditemukan verdict CRITICAL'
+    required: false
+    default: 'true'
+
+# ── OUTPUT: hasil yang bisa dipakai step lain setelah action ini ────────────
+outputs:
+  verdict:
+    description: 'Hasil akhir: PASS atau CRITICAL'
+    value: ${{ steps.decision.outputs.verdict }}
+  critical-count:
+    description: 'Jumlah file dengan severity CRITICAL'
+    value: ${{ steps.decision.outputs.critical_count }}
+  events-file:
+    description: 'Path file csg_events.jsonl hasil scan lengkap'
+    value: ${{ steps.scan.outputs.events_file }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 Install Dependencies CSG
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f "${{ github.action_path }}/requirements.txt" ]; then
+          pip install -r "${{ github.action_path }}/requirements.txt"
+        fi
+        sudo apt-get update -y && sudo apt-get install -y jq
+
+    # github.action_path secara OTOMATIS berisi seluruh isi repo config-size-guard
+    # (di-checkout GitHub di belakang layar) -- inilah yang menggantikan
+    # "git clone csg-engine" manual yang tadi dilakukan.
+    - name: 💾 Bangun Baseline dari Commit Sebelumnya
+      shell: bash
+      run: |
+        CONFIG_SRC="${{ inputs.config-file }}"
+        if [ -z "$CONFIG_SRC" ]; then
+          CONFIG_SRC="${{ github.action_path }}/csg.config.yaml"
+        fi
+        python "${{ github.action_path }}/scripts/build_baseline.py" \
+          --repo "${{ github.workspace }}" \
+          --ref "${{ inputs.baseline-ref }}" \
+          --config-src "$CONFIG_SRC"
+
+    - name: 🛡️ Eksekusi Mesin CSG
+      id: scan
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}/src
+      run: |
+        set +e
+        python -m csg.cli check --paths ${{ inputs.paths }} --format json --strict-format > "${{ github.workspace }}/csg_events.jsonl"
+        SCAN_EXIT=$?
+        set -e
+        echo "[*] csg.cli selesai dengan exit code $SCAN_EXIT"
+        if [ ! -s "${{ github.workspace }}/csg_events.jsonl" ]; then
+          echo "::error::csg_events.jsonl kosong -- kemungkinan CSG gagal/crash sebelum sempat menulis output."
+          exit 1
+        fi
+        echo "events_file=${{ github.workspace }}/csg_events.jsonl" >> "$GITHUB_OUTPUT"
+
+    - name: ⚖️ Evaluasi Verdict (Decision Engine)
+      id: decision
+      shell: bash
+      run: |
+        EVENTS="${{ github.workspace }}/csg_events.jsonl"
+        CRITICAL_COUNT=$(jq -c 'select(.event_type=="csg_file_scan" and .severity=="CRITICAL")' "$EVENTS" | wc -l)
+        echo "critical_count=$CRITICAL_COUNT" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "## 📊 Hasil Pemindaian CSG"
+          echo '```'
+          jq -c '{filepath, severity, total_score, triggered_correlations}' "$EVENTS"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "verdict=CRITICAL" >> "$GITHUB_OUTPUT"
+          echo "### ❌ CSG Verdict: CRITICAL ($CRITICAL_COUNT berkas)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[!] Ditemukan anomali CRITICAL pada $CRITICAL_COUNT berkas."
+          if [ "${{ inputs.fail-on-critical }}" = "true" ]; then
+            exit 1
+          fi
+        else
+          echo "verdict=PASS" >> "$GITHUB_OUTPUT"
+          echo "### ✅ CSG Verdict: PASS / WARN" >> "$GITHUB_STEP_SUMMARY"
+          echo "[+] Tidak ada anomali CRITICAL."
+        fi
