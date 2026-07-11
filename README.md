@@ -69,5 +69,3 @@ Syntax validators and linters only check if a configuration is *valid*. CSG chec
 - **Cloudflare (2025)**: A bot management feature file grew 6x due to a bad SQL query, causing severe memory spikes. CSG's growth ratio layer catches this.
 - **FAA (2023)**: The NOTAM database was truncated, halting all US flights. CSG's internal consistency and delta drop layers catch this.
 
-## 📝 License
-MIT License. See `LICENSE` for more information.
